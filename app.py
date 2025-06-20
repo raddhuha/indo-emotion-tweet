@@ -74,9 +74,6 @@ def download_nltk_data():
                     # Some downloads might fail, but we continue with others
                     continue
     
-    if downloaded_any:
-        st.success("✅ NLTK data downloaded!")
-    
     # Verify punkt tokenizer is available (try both versions)
     punkt_available = False
     for check_path in ['tokenizers/punkt_tab', 'tokenizers/punkt']:
@@ -185,8 +182,6 @@ def load_models():
                 'device': device,
                 'max_len': checkpoint.get('max_len', 128)
             }
-            
-            st.success("✅ Models loaded successfully!")
             return models
             
         except Exception as e:
@@ -407,25 +402,32 @@ def main():
         
         with col1:
             st.subheader("💬 Input")
+            # Gunakan session_state untuk text_input
+            if 'text_input' not in st.session_state:
+                st.session_state['text_input'] = ""
+
             text_input = st.text_area(
                 "Masukkan Teks",
+                value=st.session_state['text_input'],
                 placeholder="Contoh: Hari ini aku merasa sangat bahagia sekali!",
-                height=175
+                height=175,
+                key="text_input_area"
             )
-            
+
             model_choice = st.radio(
                 "👊🏻 Pilih Model",
                 ["IndoBERT", "Word2Vec"],
                 index=0
             )
-            
+
             col_btn1, col_btn2 = st.columns(2)
             with col_btn1:
                 analyze_btn = st.button("🔍 Analisis Emosi", type="primary", use_container_width=True)
             with col_btn2:
                 if st.button("🗑️ Clear", use_container_width=True):
+                    st.session_state['text_input'] = ""
                     st.rerun()
-            
+
             # Contoh teks
             st.subheader("💡 Contoh Teks")
             examples = [
@@ -435,10 +437,10 @@ def main():
                 "Takut banget ngeliat film horror",
                 "Biasa aja sih hari ini"
             ]
-            
+
             selected_example = st.selectbox("Pilih contoh:", [""] + examples)
-            if selected_example and selected_example != text_input:
-                text_input = selected_example
+            if selected_example and selected_example != st.session_state['text_input']:
+                st.session_state['text_input'] = selected_example
                 st.rerun()
         
         with col2:
