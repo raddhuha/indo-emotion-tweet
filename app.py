@@ -7,11 +7,13 @@ import pickle
 import joblib
 import re
 import os
+import requests
 from transformers import BertTokenizer, BertModel
 from nltk.corpus import wordnet
 from nltk import pos_tag, word_tokenize
 import nltk
 import plotly.graph_objects as go
+from huggingface_hub import hf_hub_download
 
 # Page configuration
 st.set_page_config(
@@ -87,26 +89,51 @@ def download_nltk_data():
     if not punkt_available:
         st.warning("⚠️ Punkt tokenizer not available, using basic tokenization")
 
-# Load Word2Vec with error handling
+# Download Word2Vec from Hugging Face
 @st.cache_resource
-def load_word2vec(path):
-    if not os.path.exists(path):
-        st.error(f"❌ Word2Vec file not found: {path}")
-        return {}
-    
-    word2vec = {}
+def download_word2vec():
+    """Download Word2Vec embeddings from Hugging Face"""
     try:
-        with open(path, 'r', encoding='utf-8') as f:
-            for line in f:
-                parts = line.strip().split()
-                if len(parts) > 1:
-                    word = parts[0]
-                    vector = np.array(parts[1:], dtype='float32')
-                    word2vec[word] = vector
+        with st.spinner("Downloading Word2Vec embeddings from Hugging Face..."):
+            # Download the file
+            word2vec_path = hf_hub_download(
+                repo_id="raddhuha/Word2Vec_400dim",
+                filename="Word2Vec_400dim.txt",
+                cache_dir="./cache"
+            )
+            
+            # Load the embeddings
+            word2vec = {}
+            with open(word2vec_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    parts = line.strip().split()
+                    if len(parts) > 1:
+                        word = parts[0]
+                        vector = np.array(parts[1:], dtype='float32')
+                        word2vec[word] = vector
+            return word2vec
+            
     except Exception as e:
-        st.error(f"❌ Error loading Word2Vec: {e}")
+        st.error(f"❌ Error downloading Word2Vec: {e}")
         return {}
-    return word2vec
+
+# Download IndoBERT model from Hugging Face
+@st.cache_resource
+def download_indobert_model():
+    """Download IndoBERT emotion model from Hugging Face"""
+    try:
+        with st.spinner("Downloading IndoBERT emotion model from Hugging Face..."):
+            # Download the model file
+            model_path = hf_hub_download(
+                repo_id="raddhuha/indobert_emotion_model",
+                filename="indobert_emotion_model.pth",
+                cache_dir="./cache"
+            )
+            return model_path
+            
+    except Exception as e:
+        st.error(f"❌ Error downloading IndoBERT model: {e}")
+        return None
 
 # Model IndoBERT Class
 class IndoBertClassifier(nn.Module):
@@ -128,44 +155,52 @@ def load_models():
         models = {}
         
         try:
-            # Check if required files exist
-            required_files = [
+            # Check if required local files exist
+            required_local_files = [
                 'saved_models/preprocessing_components.pkl',
                 'saved_models/label_encoder.pkl',
-                'saved_models/word2vec_logistic_model.pkl',
-                'Word2Vec_400dim.txt',
-                'saved_models/indobert_emotion_model.pth'
+                'saved_models/word2vec_logistic_model.pkl'
             ]
             
-            missing_files = [f for f in required_files if not os.path.exists(f)]
+            missing_files = [f for f in required_local_files if not os.path.exists(f)]
             if missing_files:
-                st.error(f"❌ Missing files: {missing_files}")
+                st.error(f"❌ Missing local files: {missing_files}")
+                st.info("Please ensure these files are in the correct directory:")
+                for file in missing_files:
+                    st.write(f"- {file}")
                 return None
             
-            # Load preprocessing components
+            # Load local preprocessing components
             with open('saved_models/preprocessing_components.pkl', 'rb') as f:
                 preprocessing = pickle.load(f)
             
-            # Load label encoder
+            # Load local label encoder
             le = joblib.load('saved_models/label_encoder.pkl')
             
-            # Load Word2Vec model
+            # Load local Word2Vec model
             w2v_model = joblib.load('saved_models/word2vec_logistic_model.pkl')
             
-            # Load Word2Vec embeddings
-            word2vec = load_word2vec("Word2Vec_400dim.txt")
+            # Download Word2Vec embeddings from Hugging Face
+            word2vec = download_word2vec()
+            if not word2vec:
+                st.error("❌ Failed to download Word2Vec embeddings")
+                return None
             
-            # Load IndoBERT components
+            # Load tokenizer (try local first, then online)
             if os.path.exists('saved_models/tokenizer'):
                 tokenizer = BertTokenizer.from_pretrained('saved_models/tokenizer')
             else:
-                st.warning("⚠️ Local tokenizer not found, using online version")
+                st.info("📥 Loading tokenizer from online...")
                 tokenizer = BertTokenizer.from_pretrained('indobenchmark/indobert-base-p1')
             
-            # Load IndoBERT model
+            # Download and load IndoBERT model from Hugging Face
+            model_path = download_indobert_model()
+            if not model_path:
+                st.error("❌ Failed to download IndoBERT model")
+                return None
+            
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-            checkpoint = torch.load('saved_models/indobert_emotion_model.pth', 
-                                  map_location=device, weights_only=False)
+            checkpoint = torch.load(model_path, map_location=device, weights_only=False)
             
             indobert_model = IndoBertClassifier(num_labels=checkpoint['num_classes'])
             indobert_model.load_state_dict(checkpoint['model_state_dict'])
@@ -365,7 +400,17 @@ def main():
     models = load_models()
     
     if models is None:
-        st.error("❌ Failed to load models. Please check if all required files are present.")
+        st.error("❌ Failed to load models. Please check the error messages above.")
+        st.info("""
+        **Required local files:**
+        - `saved_models/preprocessing_components.pkl`
+        - `saved_models/label_encoder.pkl` 
+        - `saved_models/word2vec_logistic_model.pkl`
+        
+        **Files downloaded from Hugging Face:**
+        - Word2Vec embeddings from `raddhuha/Word2Vec_400dim`
+        - IndoBERT model from `raddhuha/indobert_emotion_model`
+        """)
         st.stop()
     
     le = models['label_encoder']
@@ -374,7 +419,6 @@ def main():
     # Sidebar info
     with st.sidebar:
         st.header("📊 Model Info")
-        st.write(f"**Device:** {models['device']}")
         st.write(f"**Available Emotions:** {', '.join(class_names)}")
         
         st.header("🎯 Model Performance")
@@ -393,7 +437,6 @@ def main():
             - Val: 61.2%
             - Test: 58.7%
             """)
-    
     # Tabs
     tab1, tab2, tab3, tab4 = st.tabs(["📝 Analisis Teks", "🔧 Detail Preprocessing", "📁 Analisis Batch", "ℹ️ Info Model"])
     
